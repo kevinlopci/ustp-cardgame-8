@@ -1,0 +1,31 @@
+name: Test & upload test-results debug
+on:
+  workflow_dispatch:
+
+jobs:
+  test-and-upload:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install deps & run tests (example)
+        run: |
+          npm ci
+          # replace with your actual test command that should emit JSON
+          npm test -- --reporter json > test-results.json || true
+
+      - name: Debug workspace (verify file location)
+        run: |
+          echo "PWD=$(pwd)"
+          ls -la
+          echo "All JSON files found:"
+          find . -type f -name '*.json' -print || true
+          echo "Looking specifically for test-results.json:"
+          find . -type f -name 'test-results.json' -print || true
+
+      - name: Upload test-results artifact (use glob)
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: '**/test-results.json'
