@@ -1,3 +1,31 @@
+# Insert these steps into the job that builds/tests (under jobs.<job_id>.steps)
+jobs:
+  test-and-upload:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Run tests / generate report
+        run: |
+          npm ci
+          npm test -- --reporter json > test-results.json || true
+
+      - name: Debug workspace (verify test file)
+        run: |
+          echo "PWD=$(pwd)"
+          ls -la
+          echo "All JSON files found:"
+          find . -type f -name '*.json' -print || true
+          echo "Looking specifically for test-results.json:"
+          find . -type f -name 'test-results.json' -print || true
+
+      - name: Upload test-results artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: '**/test-results.json'
+
 name: Build and attach binaries zip to Release
 on:
   push:
