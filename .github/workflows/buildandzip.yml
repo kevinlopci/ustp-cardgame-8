@@ -1,32 +1,37 @@
-name: Build and zip site
+name: Build and attach binaries zip to Release
 on:
   push:
     tags:
-      - 'v*'
+      - 'v*'            # only run on tag pushes like v1.2.3
   workflow_dispatch: {}
 
 permissions:
-  contents: read
+  contents: write      # needed to create releases and upload assets
 
 jobs:
-  build-and-zip:
+  build-and-upload-zip:
     runs-on: ubuntu-latest
-    outputs:
-      zip-name: ${{ steps.zip.outputs.zip_name }}
     steps:
       - name: Checkout (full history for tags)
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: Extract tag/version
-        id: tag
+      - name: Ensure jq present
+        run: sudo apt-get update -y && sudo apt-get install -y jq
+
+      - name: Parse tag and version
+        id: parse
         run: |
+          if [[ "${GITHUB_REF}" != refs/tags/* ]]; then
+            echo "Not a tag push: ${GITHUB_REF}"
+            exit 1
+          fi
           TAG=${GITHUB_REF#refs/tags/}
           VERSION=${TAG#v}
-          echo "TAG=$TAG" >> $GITHUB_ENV
-          echo "VERSION=$VERSION" >> $GITHUB_ENV
-          echo "Tag: $TAG, Version: $VERSION"
+          echo "TAG=${TAG}" >> $GITHUB_ENV
+          echo "VERSION=${VERSION}" >> $GITHUB_ENV
+          echo "Parsed TAG=${TAG}, VERSION=${VERSION}"
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
@@ -36,23 +41,60 @@ jobs:
       - name: Install dependencies
         run: npm install
 
-      - name: Build site
+      - name: Build site / project
         run: npm run build
 
-      - name: Archive built site to zip
-        id: zip
+      - name: Create zip of build output
         run: |
-          ZIP_NAME="binaries-${VERSION}.zip"
           mkdir -p release_artifacts
+          ZIP_NAME="binaries-${VERSION}.zip"
+          ZIP_PATH="release_artifacts/${ZIP_NAME}"
           if [ ! -d "./dist" ]; then
-            echo "Build output ./dist not found"; exit 1
+            echo "ERROR: expected build output at ./dist but not found"
+            ls -la
+            exit 1
           fi
-          zip -r "release_artifacts/$ZIP_NAME" ./dist
-          echo "::set-output name=zip_name::$ZIP_NAME"
-          echo "ZIP_PATH=release_artifacts/$ZIP_NAME" >> $GITHUB_ENV
+          zip -r "$ZIP_PATH" ./dist
+          echo "ZIP_PATH=$ZIP_PATH" >> $GITHUB_ENV
+          echo "ZIP_NAME=$ZIP_NAME" >> $GITHUB_ENV
 
-      - name: Upload zip artifact
-        uses: actions/upload-artifact@v4
+      - name: Get existing release or create one
+        id: release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          OWNER=${GITHUB_REPOSITORY%/*}
+          REPO=${GITHUB_REPOSITORY#*/}
+          TAG="${TAG:-${{ env.TAG }}}"
+          # Check if release exists
+          API_URL="https://api.github.com/repos/$OWNER/$REPO/releases/tags/$TAG"
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" -H "Authorization: token $GITHUB_TOKEN" -H "Accept: application/vnd.github.v3+json" "$API_URL")
+          if [ "$STATUS" = "200" ]; then
+            BODY=$(curl -s -H "Authorization: token $GITHUB_TOKEN" -H "Accept: application/vnd.github.v3+json" "$API_URL")
+            UPLOAD_URL=$(echo "$BODY" | jq -r .upload_url | sed -e 's/{?name,label}//')
+            RELEASE_ID=$(echo "$BODY" | jq -r .id)
+            echo "Found existing release id=$RELEASE_ID"
+          else
+            echo "Release not found, creating..."
+            CREATE=$(curl -s -X POST -H "Authorization: token $GITHUB_TOKEN" -H "Accept: application/vnd.github.v3+json" "https://api.github.com/repos/$OWNER/$REPO/releases" -d "$(jq -n --arg tag "$TAG" --arg name "Release $TAG" --arg body "Automated release for $TAG" '{tag_name:$tag, name:$name, body:$body, draft:false, prerelease:false}')")
+            UPLOAD_URL=$(echo "$CREATE" | jq -r .upload_url | sed -e 's/{?name,label}//')
+            RELEASE_ID=$(echo "$CREATE" | jq -r .id)
+            if [ "$RELEASE_ID" = "null" ] || [ -z "$UPLOAD_URL" ]; then
+              echo "Failed to create release. Response:"
+              echo "$CREATE"
+              exit 1
+            fi
+            echo "Created release id=$RELEASE_ID"
+          fi
+          echo "UPLOAD_URL=${UPLOAD_URL}" >> $GITHUB_ENV
+          echo "RELEASE_ID=${RELEASE_ID}" >> $GITHUB_ENV
+
+      - name: Upload zip to release
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          name: ${{ env.TAG }}-binaries
-          path: ${{ env.ZIP_PATH }}
+          upload_url: ${{ env.UPLOAD_URL }}
+          asset_path: ${{ env.ZIP_PATH }}
+          asset_name: ${{ env.ZIP_NAME }}
+          asset_content_type: application/zip
