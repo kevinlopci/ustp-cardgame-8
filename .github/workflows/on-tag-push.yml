@@ -1,0 +1,43 @@
+name: On tag push
+on:
+  push:
+    # Match specific tag patterns:
+    # - 'v*'   # tags starting with v (e.g. v1.0.0)
+    # - 'release-*' # tags starting with release-
+    # Or match all tags:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  run-on-tag:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout (full history)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Extract tag name
+        id: tag
+        run: |
+          # GITHUB_REF is refs/tags/<tag>
+          TAG=${GITHUB_REF#refs/tags/}
+          echo "TAG=$TAG" >> $GITHUB_ENV
+          # if your tag is v1.0.0 and you want version=1.0.0:
+          VERSION=${TAG#v}
+          echo "VERSION=$VERSION" >> $GITHUB_ENV
+          echo "Triggered for tag: $TAG"
+
+      - name: Create GitHub Release from tag
+        uses: actions/create-release@v1
+        with:
+          tag_name: ${{ env.TAG }}
+          release_name: "Release ${{ env.VERSION }}"
+          body: "Automated release for ${{ env.TAG }}"
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
