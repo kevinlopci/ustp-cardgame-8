@@ -1,11 +1,10 @@
 version: 2
 updates:
-  - package-ecosystem: "npm"
-    directory: "/"
-    schedule:
-      interval: "daily"
-
-  - package-ecosystem: "devcontainers"
-    directory: "/"
+  - package-ecosystem: "npm"   # change to your ecosystem: npm, maven, pip, docker, github-actions, etc.
+    directory: "/"            # path to the manifest
     schedule:
       interval: "weekly"
+    ignore:
+      - dependency-name: "lodash"        # change to the package you want to exclude
+        # optional: ignore only certain update types (omit to ignore all)
+        update-types: ["version-update:semver-major"]
