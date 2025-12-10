@@ -1,0 +1,58 @@
+name: Build and zip site
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-zip:
+    runs-on: ubuntu-latest
+    outputs:
+      zip-name: ${{ steps.zip.outputs.zip_name }}
+    steps:
+      - name: Checkout (full history for tags)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Extract tag/version
+        id: tag
+        run: |
+          TAG=${GITHUB_REF#refs/tags/}
+          VERSION=${TAG#v}
+          echo "TAG=$TAG" >> $GITHUB_ENV
+          echo "VERSION=$VERSION" >> $GITHUB_ENV
+          echo "Tag: $TAG, Version: $VERSION"
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Build site
+        run: npm run build
+
+      - name: Archive built site to zip
+        id: zip
+        run: |
+          ZIP_NAME="binaries-${VERSION}.zip"
+          mkdir -p release_artifacts
+          if [ ! -d "./dist" ]; then
+            echo "Build output ./dist not found"; exit 1
+          fi
+          zip -r "release_artifacts/$ZIP_NAME" ./dist
+          echo "::set-output name=zip_name::$ZIP_NAME"
+          echo "ZIP_PATH=release_artifacts/$ZIP_NAME" >> $GITHUB_ENV
+
+      - name: Upload zip artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.TAG }}-binaries
+          path: ${{ env.ZIP_PATH }}
